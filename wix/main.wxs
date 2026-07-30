@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Calibrator"
+    Manufacturer="0x484558"
+    Version="$(var.Version)"
+    UpgradeCode="8F6236B2-9D92-4C78-A1E4-61E47B0D8534"
+    Scope="perMachine">
+    <SummaryInformation Description="HDR SDR white level balance calibrator daemon" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Calibrator is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Feature Id="MainFeature" Title="Calibrator" Level="1">
+      <ComponentGroupRef Id="CalibratorComponents" />
+    </Feature>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Calibrator" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="CalibratorComponents" Directory="INSTALLFOLDER">
+      <Component Id="CalibratorExeComponent" Guid="D2A68C22-1C38-4F1E-9C84-7548E12A346E" Bitness="always64">
+        <File Id="CalibratorExe" Source="$(var.CargoTargetBinDir)\calibrator.exe" KeyPath="yes" />
+        <RegistryValue
+          Root="HKLM"
+          Key="Software\Microsoft\Windows\CurrentVersion\Run"
+          Name="Calibrator"
+          Type="string"
+          Value="&quot;[#CalibratorExe]&quot;" />
+      </Component>
+    </ComponentGroup>
+  </Package>
+</Wix>
