@@ -5,6 +5,9 @@ edition = "2024"
 authors = ["0x484558 <0x484558@pm.me>"]
 description = "HDR balance calibrator daemon"
 
+[build-dependencies]
+winresource = { version = "0.1.31", default-features = false }
+
 [workspace]
 members = [".", "xtask"]
 default-members = ["."]
@@ -35,7 +38,10 @@ windows = { version = "0.62.2", features = [
 wmi = { version = "0.18.4", default-features = false }
 
 [profile.release]
+opt-level = 3
 codegen-units = 1
-lto = "thin"
+lto = "fat"
+debug = false
+overflow-checks = false
 panic = "abort"
-strip = "symbols"
+strip = true

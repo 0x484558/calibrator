@@ -44,15 +44,13 @@ jobs:
         include:
           - target: x86_64-pc-windows-msvc
             asset: calibrator-windows-x86_64-v3
-            rustflags: "-C target-cpu=x86-64-v3"
           - target: aarch64-pc-windows-msvc
             asset: calibrator-windows-aarch64
-            rustflags: ""
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@nightly
         with:
           targets: ${{ matrix.target }}
 
@@ -67,14 +65,10 @@ jobs:
 
       - name: Build release binary
         shell: bash
-        env:
-          RUSTFLAGS: ${{ matrix.rustflags }}
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Build MSI with xtask
         shell: bash
-        env:
-          RUSTFLAGS: ${{ matrix.rustflags }}
         run: cargo run --package calibrator-xtask -- package-msi --target ${{ matrix.target }}
 
       - name: Package release assets

@@ -23,8 +23,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CREATESTRUCTW, CreatePopupMenu, CreateWindowExW, DBT_CONFIGCHANGED,
     DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE, DBT_DEVNODES_CHANGED, DBT_DEVTYP_DEVICEINTERFACE,
     DEV_BROADCAST_DEVICEINTERFACE_W, DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW, DestroyMenu,
-    DestroyWindow, GWLP_USERDATA, GetWindowLongPtrW, HDEVNOTIFY, IDI_APPLICATION, LoadIconW,
-    MF_STRING, PBT_APMRESUMEAUTOMATIC, PBT_POWERSETTINGCHANGE, PostMessageW, RegisterClassW,
+    DestroyWindow, GWLP_USERDATA, GetWindowLongPtrW, HDEVNOTIFY, HICON, LoadIconW, MF_STRING,
+    PBT_APMRESUMEAUTOMATIC, PBT_POWERSETTINGCHANGE, PostMessageW, RegisterClassW,
     RegisterDeviceNotificationW, RegisterWindowMessageW, SetForegroundWindow, SetWindowLongPtrW,
     TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, UnregisterClassW,
     UnregisterDeviceNotification, WM_APP, WM_CLOSE, WM_CONTEXTMENU, WM_DEVICECHANGE,
@@ -38,8 +38,9 @@ use crate::win32::{Error, Stage};
 
 const TRAY_CALLBACK: u32 = WM_APP + 1;
 const TRAY_ICON_ID: u32 = 1;
+const APP_ICON_RESOURCE_ID: u16 = 1;
 const NIN_KEYSELECT: u32 = NIN_SELECT | 1;
-const TOOLTIP: &str = "HDR calibrator — double-click to exit";
+const TOOLTIP: &str = "HDR calibrator (double-click to exit)";
 const PROBE_TOOLTIP: &str = "HDR probe — use tray menu to record or exit";
 const COMMAND_PROBE: usize = 1;
 const COMMAND_EXIT: usize = 2;
@@ -63,6 +64,7 @@ const PROBE_POS_NONE: u32 = u32::MAX;
 
 struct WindowContext {
     signals: WindowSignals,
+    icon: HICON,
     probe_mode: bool,
     taskbar_created_msg: u32,
     probe_position: AtomicU32,
@@ -82,12 +84,15 @@ impl Tray {
         let module = unsafe { GetModuleHandleW(None) }
             .map_err(|ref error| Error::windows(Stage::RegisterWindowClass, error))?;
         let instance = HINSTANCE(module.0);
+        let icon = load_application_icon(instance)
+            .map_err(|ref error| Error::windows(Stage::LoadApplicationIcon, error))?;
         // Register the dynamic TaskbarCreated message broadcast by Explorer on launch/restart.
         // SAFETY: static wide string.
         let taskbar_created_msg = unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) };
 
         let mut context = Box::new(WindowContext {
             signals,
+            icon,
             probe_mode,
             taskbar_created_msg,
             probe_position: AtomicU32::new(PROBE_POS_NONE),
@@ -96,6 +101,7 @@ impl Tray {
         let window_class = WNDCLASSW {
             lpfnWndProc: Some(window_proc),
             hInstance: instance,
+            hIcon: icon,
             lpszClassName: w!("CalibratorMessageWindow"),
             ..Default::default()
         };
@@ -181,6 +187,17 @@ impl Tray {
             let _ = unsafe { Shell_NotifyIconW(NIM_DELETE, &raw const data) };
             self.icon_added = false;
         }
+    }
+}
+
+fn load_application_icon(instance: HINSTANCE) -> windows::core::Result<HICON> {
+    // SAFETY: low-valued PCWSTR uses the documented MAKEINTRESOURCE representation. The icon
+    // resource is linked into this module and LoadIconW returns a shared handle.
+    unsafe {
+        LoadIconW(
+            Some(instance),
+            PCWSTR(usize::from(APP_ICON_RESOURCE_ID) as *const u16),
+        )
     }
 }
 
@@ -396,6 +413,12 @@ fn handle_tray_callback(
         return Some(LRESULT(0));
     }
     if icon_id == TRAY_ICON_ID && event == WM_CONTEXTMENU {
+        // Normal mode needs no context menu: double-click already provides the only command.
+        // Probe mode retains its menu because recording the current value requires an explicit
+        // action distinct from exit.
+        if !context_menu_enabled(context.probe_mode) {
+            return Some(LRESULT(0));
+        }
         // Version-4 notifications encode signed screen coordinates in wParam.
         let packed_position = u32::try_from(w_param.0 & 0xffff_ffff).unwrap_or(0);
         let x = i32::from(i16::from_ne_bytes(
@@ -413,6 +436,10 @@ fn handle_tray_callback(
         return Some(LRESULT(0));
     }
     None
+}
+
+const fn context_menu_enabled(probe_mode: bool) -> bool {
+    probe_mode
 }
 
 fn show_context_menu(window: HWND, x: i32, y: i32, context: &WindowContext) {
@@ -474,10 +501,6 @@ fn show_context_menu(window: HWND, x: i32, y: i32, context: &WindowContext) {
 }
 
 fn ensure_tray_icon(window: HWND, context: &WindowContext) -> bool {
-    let Ok(icon) = (unsafe { LoadIconW(None, IDI_APPLICATION) }) else {
-        return false;
-    };
-
     let raw_pos = context.probe_position.load(Ordering::Relaxed);
     let position = u8::try_from(raw_pos).ok();
 
@@ -496,7 +519,7 @@ fn ensure_tray_icon(window: HWND, context: &WindowContext) -> bool {
         uID: TRAY_ICON_ID,
         uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP,
         uCallbackMessage: TRAY_CALLBACK,
-        hIcon: icon,
+        hIcon: context.icon,
         ..Default::default()
     };
     write_wide_truncated(&mut data.szTip, &tooltip);
@@ -535,7 +558,23 @@ fn write_wide_truncated<const N: usize>(destination: &mut [u16; N], text: &str) 
 
 #[cfg(test)]
 mod tests {
-    use super::write_wide_truncated;
+    use windows::Win32::Foundation::HINSTANCE;
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+
+    use super::{context_menu_enabled, load_application_icon, write_wide_truncated};
+
+    #[test]
+    fn context_menu_is_reserved_for_probe_actions() {
+        assert!(!context_menu_enabled(false));
+        assert!(context_menu_enabled(true));
+    }
+
+    #[test]
+    fn application_icon_resource_is_embedded_and_loadable() {
+        // SAFETY: None requests the current test executable's module.
+        let module = unsafe { GetModuleHandleW(None) }.expect("test module should be available");
+        load_application_icon(HINSTANCE(module.0)).expect("icon resource 1 should be loadable");
+    }
 
     #[test]
     fn wide_string_is_terminated() {

@@ -54,6 +54,7 @@ pub(crate) enum Stage {
     GpuResetSubscription = 16,
     ProbeConfiguration = 17,
     ProbeLog = 18,
+    LoadApplicationIcon = 19,
 }
 
 #[cfg(test)]
@@ -81,6 +82,7 @@ mod tests {
             Stage::GpuResetSubscription,
             Stage::ProbeConfiguration,
             Stage::ProbeLog,
+            Stage::LoadApplicationIcon,
         ];
 
         for (index, stage) in stages.iter().copied().enumerate() {
